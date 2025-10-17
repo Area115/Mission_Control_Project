@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtual env
+venv/
+env/
+
+# Environment & credentials
+.env
+
+# Docker
+*.pid
+*.log
+*.sock
+*.tmp
+*.bak
+
+# Redis data
+dump.rdb
+
+# OS junk
+.DS_Store
+Thumbs.db
