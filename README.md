@@ -47,18 +47,7 @@ This project simulates a **real-time distributed control system** where:
 
 ---
 
-## 🧩 System Architecture
 
-```mermaid
-graph LR
-    A[Commander API (FastAPI)] -->|Publishes Mission| B[(RabbitMQ Orders Queue)]
-    B --> C1[Soldier #1 Worker]
-    B --> C2[Soldier #2 Worker]
-    C1 -->|Status Updates| D[(RabbitMQ Status Queue)]
-    C2 -->|Status Updates| D
-    D -->|Update Redis| E[(Redis Mission Store)]
-    E -->|Queried by| A
-```
 
 | Component | Technology | Purpose |
 |------------|-------------|----------|
@@ -265,11 +254,4 @@ MCP/
 
 ---
 
-## 🧑‍💻 Author
 
-**Omkar Suralkar**  
-💼 Junior Data Scientist | 🚀 AI Systems Enthusiast | 🧠 Building Distributed & Intelligent Systems
-
----
-
-⭐ *If you like this project, consider giving it a star on GitHub!* ⭐
