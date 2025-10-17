@@ -16,7 +16,26 @@ Communication happens via RabbitMQ message queues.
 Mission status is stored in Redis for real-time tracking.
 
 Everything is orchestrated using Docker Compose, so anyone can run it instantly.
+🚀 Note : This system is made up for two soldiers, so only soldier_id: 1 or 2 will be processed others will be in queue and not being processed.
+Example : 
+{
+  "soldier_id": "2",
+  "objective": "Climb Tiger Hill",
+  "priority": "MEDIUM"
+}
 
+{
+  "soldier_id": "2",
+  "objective": "Check CCTV",
+  "priority": "LOW"
+}
+
+{
+  "soldier_id": "1",
+  "objective": "Attend Morning parade",
+  "priority": "HIGH"
+}
+These are acceptable.
 graph LR
     A[Commander API (FastAPI)] -->|Publishes Mission| B[(RabbitMQ Orders Queue)]
     B --> C1[Soldier #1 Worker]
