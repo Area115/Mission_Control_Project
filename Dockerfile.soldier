@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY soldier /app/soldier
+COPY commander /app/commander
+COPY .env /app/.env
+COPY requirements.txt /app/requirements.txt
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+ENV SOLDIER_ID=1
+
+CMD ["python", "-m", "soldier.worker"]

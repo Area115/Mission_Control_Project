@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  redis:
+    image: redis:7.2
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  commander:
+    build:
+      context: .
+      dockerfile: Dockerfile.commander
+    container_name: commander
+    ports:
+      - "8000:8000"
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - REDIS_HOST=redis
+    depends_on:
+      - rabbitmq
+      - redis
+
+  soldier1:
+    build:
+      context: .
+      dockerfile: Dockerfile.soldier
+    container_name: soldier1
+    environment:
+      - SOLDIER_ID=1
+      - COMMANDER_BASE=http://commander:8000
+      - RABBITMQ_HOST=rabbitmq
+      - REDIS_HOST=redis
+    depends_on:
+      - commander
+      - rabbitmq
+      - redis
+    command: ["/bin/sh", "-c", "sleep 10 && python -m soldier.worker"]
+
+  soldier2:
+    build:
+      context: .
+      dockerfile: Dockerfile.soldier
+    container_name: soldier2
+    environment:
+      - SOLDIER_ID=2
+      - COMMANDER_BASE=http://commander:8000
+      - RABBITMQ_HOST=rabbitmq
+      - REDIS_HOST=redis
+    depends_on:
+      - commander
+      - rabbitmq
+      - redis
+    command: ["/bin/sh", "-c", "sleep 10 && python -m soldier.worker"]

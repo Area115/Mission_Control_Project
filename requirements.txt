@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pika
+redis
+requests
+python-dotenv
+PyJWT
