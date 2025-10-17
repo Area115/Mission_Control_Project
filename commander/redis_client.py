@@ -79,3 +79,25 @@ class MissionStore:
         mission["status"] = new_status
         self.redis.set(key, json.dumps(mission))
         print(f" Mission {mission_id} status updated to {new_status}")
+    # -------------------------------------------------------
+# 🧩 Soldier Mission Queue Management
+# -------------------------------------------------------
+    def enqueue_mission_for_soldier(self, soldier_id: str, mission_data: dict):
+        """Add a mission to the soldier's Redis queue."""
+        queue_key = f"soldier_queue:{soldier_id}"
+        self.redis.rpush(queue_key, json.dumps(mission_data))
+        print(f"📦 Queued mission {mission_data['mission_id']} for soldier {soldier_id}")
+
+    def dequeue_mission_for_soldier(self, soldier_id: str) -> dict | None:
+        """Pop the next mission from the soldier's Redis queue."""
+        queue_key = f"soldier_queue:{soldier_id}"
+        data = self.redis.lpop(queue_key)
+        if not data:
+            return None
+        try:
+            mission = json.loads(data)
+            print(f"📤 Dequeued mission {mission['mission_id']} for soldier {soldier_id}")
+            return mission
+        except Exception:
+            return None
+

@@ -45,15 +45,48 @@ app = FastAPI(title="Commander's Camp API", version="1.0")
 # -------------------------------------------------------------------
 # 🔐 AUTH ENDPOINT — Issues JWT Token
 # -------------------------------------------------------------------
+# @app.get("/auth/token")
+# def get_token(soldier_id: str = Query(..., description="Soldier ID requesting token")):
+#     try:
+#         token = issue_token(soldier_id)
+#         return {"token": token, "ttl_seconds": int(os.getenv("JWT_TTL_SECONDS", 30))}
+#     except Exception as e:
+#         print("AUTH TOKEN ERROR:")
+#         traceback.print_exc()
+#         raise HTTPException(status_code=500, detail=f"Failed to issue token: {e}")
+JWT_TTL_SECONDS = int(os.getenv("JWT_TTL_SECONDS", 30))
+
 @app.get("/auth/token")
-def get_token(soldier_id: str = Query(..., description="Soldier ID requesting token")):
-    try:
-        token = issue_token(soldier_id)
-        return {"token": token, "ttl_seconds": int(os.getenv("JWT_TTL_SECONDS", 30))}
-    except Exception as e:
-        print("AUTH TOKEN ERROR:")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to issue token: {e}")
+def get_token(soldier_id: str = Query(...)):
+    """Issue a new JWT for a soldier."""
+    token = issue_token(soldier_id)
+    issued_at = time.time()
+    expires_at = issued_at + JWT_TTL_SECONDS
+    active_soldiers[soldier_id] = {
+        "token": token,
+        "issued_at": issued_at,
+        "expires_at": expires_at
+    }
+    return {"token": token, "ttl_seconds": JWT_TTL_SECONDS}
+
+
+@app.get("/auth/current-token")
+def get_current_token(soldier_id: str = Query(...)):
+    """Return the current active JWT for a soldier, if available."""
+    token_info = active_soldiers.get(soldier_id)
+    if not token_info:
+        raise HTTPException(status_code=404, detail=f"No active token found for soldier {soldier_id}")
+
+    # fallback for old tokens that don’t have 'expires_at'
+    issued_at = token_info.get("issued_at", time.time())
+    expires_at = token_info.get("expires_at", issued_at + JWT_TTL_SECONDS)
+
+    remaining = max(0, int(expires_at - time.time()))
+    return {
+        "soldier_id": soldier_id,
+        "current_token": token_info.get("token", "unknown"),
+        "expires_in": remaining
+    }
 
 
 # -------------------------------------------------------------------
@@ -70,38 +103,39 @@ class MissionRequest(BaseModel):
 # -------------------------------------------------------------------
 @app.post("/missions", status_code=202)
 def create_mission(mission: MissionRequest):
-
     mission_id = str(uuid.uuid4())
-
-    # ✅ 1️⃣ Check if soldier already has an active mission
-    active_missions = mission_store.get_all_missions_for_soldier(mission.soldier_id)
-    if any(m["status"] in ["QUEUED", "IN_PROGRESS"] for m in active_missions):
-        return {"detail": f"Soldier {mission.soldier_id} already has an active mission."}
-
-    # ✅ 2️⃣ Issue or reuse token
-    if mission.soldier_id not in active_soldiers:
-        token = issue_token(mission.soldier_id)
-        active_soldiers[mission.soldier_id] = {"token": token, "issued_at": time.time()}
-        print(f"🎫 Issued new token for soldier {mission.soldier_id}")
-    else:
-        token = active_soldiers[mission.soldier_id]["token"]
-
-    # ✅ 3️⃣ Prepare mission payload
+    token = issue_token(mission.soldier_id)
     mission_payload = {
         "mission_id": mission_id,
         "soldier_id": mission.soldier_id,
         "objective": mission.objective,
         "priority": mission.priority,
         "status": "QUEUED",
-        "token": token,
+        "token": token
     }
 
-    # ✅ 4️⃣ Store mission & publish to RabbitMQ
-    mission_store.add_mission(mission_id, mission_payload)
-    mission_publisher.publish(mission_payload)
+    # Check if soldier is already busy
+    active_missions = mission_store.get_all_missions_for_soldier(mission.soldier_id)
+    busy = any(m["status"] == "IN_PROGRESS" for m in active_missions)
 
-    print(f"📤 Mission published to orders_queue: {mission_payload}")
+
+    # commander/main.py in POST /missions (busy path)
+    if busy:
+        mission_payload["token"] = issue_token(mission.soldier_id)
+        mission_store.enqueue_mission_for_soldier(mission.soldier_id, mission_payload)
+        mission_store.add_mission(mission_id, mission_payload)
+        return {"mission_id": mission_id, "status": "QUEUED (waiting)"}
+
+
+
+    # If soldier is free
+    mission_store.add_mission(mission_id, mission_payload)
+    publisher = MissionPublisher()
+    publisher.publish(mission_payload)
+    print(f"📤 Mission published immediately → {mission_payload}")
     return {"mission_id": mission_id, "status": "QUEUED"}
+
+
 
 
 # -------------------------------------------------------------------
