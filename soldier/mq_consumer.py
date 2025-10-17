@@ -2,49 +2,48 @@ import pika
 import json
 import os
 from dotenv import load_dotenv
+import time
 
 load_dotenv()
 
-RABBIT_HOST = os.getenv("RABBIT_HOST", "localhost")
+RABBIT_HOST = os.getenv("RABBIT_HOST", "rabbitmq")
 RABBIT_PORT = int(os.getenv("RABBIT_PORT", 5672))
-ORDERS_QUEUE = "orders_queue"
-
+ORDERS_QUEUE = os.getenv("ORDERS_QUEUE", "orders_queue")
 
 class MissionConsumer:
-
     def __init__(self, on_message_callback):
         self.on_message_callback = on_message_callback
-        try:
-            connection_params = pika.ConnectionParameters(host=RABBIT_HOST, port=RABBIT_PORT)
-            # self.connection = pika.BlockingConnection(connection_params)
-            self.connection = pika.BlockingConnection(
-    pika.ConnectionParameters(host="rabbitmq", heartbeat=600, blocked_connection_timeout=300)
-)
-            self.channel = self.connection.channel()
-            self.channel.queue_declare(queue=ORDERS_QUEUE, durable=True)
-            print(f" Soldier connected to RabbitMQ — listening on {ORDERS_QUEUE}")
-        except Exception as e:
-            print(f" Soldier failed to connect to RabbitMQ: {e}")
-            raise
+
+        # Try connecting multiple times in case RabbitMQ isn't ready yet
+        for attempt in range(10):
+            try:
+                connection_params = pika.ConnectionParameters(
+                    host=RABBIT_HOST,
+                    port=RABBIT_PORT,
+                    heartbeat=600,
+                    blocked_connection_timeout=300
+                )
+                self.connection = pika.BlockingConnection(connection_params)
+                self.channel = self.connection.channel()
+                self.channel.queue_declare(queue=ORDERS_QUEUE, durable=True)
+                self.channel.basic_consume(queue="orders_queue", on_message_callback=callback)
+                print(f"✅ Soldier connected to RabbitMQ at {RABBIT_HOST}:{RABBIT_PORT} — listening on {ORDERS_QUEUE}")
+                break
+            except Exception as e:
+                print(f"⚠️ Soldier failed to connect to RabbitMQ (attempt {attempt+1}/10): {e}")
+                time.sleep(3)
+        else:
+            raise Exception("❌ Could not connect to RabbitMQ after 10 attempts")
 
     def start_consuming(self):
-        def callback(ch, method, properties, body):
-            try:
-                message = json.loads(body.decode())
-                print(f" Received mission: {message}")
-                self.on_message_callback(message)
-                ch.basic_ack(delivery_tag=method.delivery_tag)
-            except Exception as e:
-                print(f" Error processing message: {e}")
-                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        self.channel.basic_consume(
+            queue=ORDERS_QUEUE,
+            on_message_callback=self.on_message_callback,
+            auto_ack=False
+        )
+        print("🎯 Soldier started consuming missions...")
+        self.channel.start_consuming()
 
-        self.channel.basic_consume(queue=ORDERS_QUEUE, on_message_callback=callback)
-        print(" Waiting for missions... Press CTRL+C to stop.")
-        try:
-            self.channel.start_consuming()
-        except KeyboardInterrupt:
-            print(" Soldier stopped listening.")
-            self.connection.close()
 
 if __name__ == "__main__":
     def handle_mission(msg):

@@ -1,14 +1,24 @@
-FROM python:3.12-slim
+# ============================
+# Soldier Dockerfile
+# ============================
+FROM python:3.10-slim
 
 WORKDIR /app
 
-COPY soldier /app/soldier
-COPY commander /app/commander
-COPY .env /app/.env
-COPY requirements.txt /app/requirements.txt
+# Copy Soldier code
+COPY soldier/ /app/soldier/
+COPY requirements.txt /app/
 
+# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-ENV SOLDIER_ID=1
+# Default env vars
+ENV PYTHONUNBUFFERED=1
+ENV RABBIT_HOST=rabbitmq
+ENV RABBIT_PORT=5672
+ENV ORDERS_QUEUE=orders_queue
+ENV STATUS_QUEUE=status_queue
 
+# Start the Soldier Worker
+# CMD ["python3", "soldier/worker.py"]
 CMD ["python", "-m", "soldier.worker"]

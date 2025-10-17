@@ -5,10 +5,11 @@ import os
 
 class MissionStore:
     def __init__(self):
-        # Connect to Redis
+        redis_host = os.getenv("REDIS_HOST", "redis")
+        redis_port = int(os.getenv("REDIS_PORT", 6379))
         self.redis = redis.Redis(
-            host=os.getenv("REDIS_HOST", "localhost"),
-            port=int(os.getenv("REDIS_PORT", 6379)),
+            host=redis_host,
+            port=redis_port,
             decode_responses=True
         )
 

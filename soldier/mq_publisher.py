@@ -1,44 +1,50 @@
 import pika
 import json
 import os
-from dotenv import load_dotenv
+import time
 
-load_dotenv()
-
-RABBIT_HOST = os.getenv("RABBIT_HOST", "localhost")
-RABBIT_PORT = int(os.getenv("RABBIT_PORT", 5672))
-STATUS_QUEUE = "status_queue"
-
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
 
 class StatusPublisher:
     def __init__(self):
-        # self.connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
-        self.connection = pika.BlockingConnection(
-        pika.ConnectionParameters(host=RABBITMQ_HOST)
-)
-        self.channel = self.connection.channel()
-        # self.channel.queue_declare(queue="status_queue")
-        self.channel.queue_declare(queue="status_queue", durable=True)
+        for attempt in range(1, 11):
+            try:
+                print(f"🕓 Soldier connecting to RabbitMQ ({RABBITMQ_HOST}) attempt {attempt}/10...")
+                self.connection = pika.BlockingConnection(
+                    pika.ConnectionParameters(
+                        host=RABBITMQ_HOST,
+                        heartbeat=600,
+                        blocked_connection_timeout=300
+                    )
+                )
+                self.channel = self.connection.channel()
+                self.channel.queue_declare(queue="status_queue", durable=True)
+                print(f"✅ Soldier connected to RabbitMQ at {RABBITMQ_HOST}: publishing to status_queue")
+                break
+            except Exception as e:
+                print(f"⚠️ Soldier failed to connect to RabbitMQ ({attempt}/10): {e}")
+                time.sleep(5)
+        else:
+            raise Exception("❌ Soldier could not connect to RabbitMQ")
 
-
-    def publish_status(self, mission_id: str, status: str, token: str | None = None):
-        message = {"mission_id": mission_id, "status": status}
-        if token:
-            message["token"] = token
-        body = json.dumps(message)
-        self.channel.basic_publish(exchange="", routing_key="status_queue", body=body)
-        print(f"📡 Sent status update → {message}")
+    def publish_status(self, mission_update: dict):
+        try:
+            # ✅ Ensure it's serialized only once
+            message = json.dumps(mission_update)
+            self.channel.basic_publish(
+                exchange='',
+                routing_key='status_queue',
+                body=message,
+                properties=pika.BasicProperties(
+                    delivery_mode=2  # make message persistent
+                )
+            )
+            print(f"📤 Soldier sent update to status_queue: {message}")
+        except Exception as e:
+            print(f"❌ Error publishing status: {e}")
 
     def close(self):
-        """Cleanly close connection."""
-        self.connection.close()
-        print("🔌 Closed connection to RabbitMQ")
-
-
-if __name__ == "__main__":
-    publisher = StatusPublisher()
-    publisher.publish_status("mission-alpha", "IN_PROGRESS")
-    publisher.publish_status("mission-alpha", "COMPLETED")
-    publisher.close()
-
+        try:
+            self.connection.close()
+        except:
+            pass

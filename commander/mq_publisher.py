@@ -1,57 +1,39 @@
-import pika
-import json
-import time
 import os
+import json
+import pika
+
+RABBIT_HOST = os.getenv("RABBIT_HOST", "rabbitmq")
+RABBIT_PORT = int(os.getenv("RABBIT_PORT", 5672))
 
 class MissionPublisher:
     def __init__(self):
-        self.connection = None
-        self.channel = None
-        self.connect()
+        credentials = pika.PlainCredentials("guest", "guest")
+        connection_params = pika.ConnectionParameters(
+            host=RABBIT_HOST,
+            port=RABBIT_PORT,
+            credentials=credentials,
+            heartbeat=600,
+            blocked_connection_timeout=300,
+        )
+        self.connection = pika.BlockingConnection(connection_params)
+        self.channel = self.connection.channel()
+        print(f"✅ Commander connected to RabbitMQ ({RABBIT_HOST}) — ready to publish missions")
 
-    def connect(self):
-        host = os.getenv("RABBITMQ_HOST", "rabbitmq")
-        for attempt in range(10):
-            try:
-                print(f" [Commander] Connecting to RabbitMQ at {host} (attempt {attempt+1}/10)...")
-                self.connection = pika.BlockingConnection(
-                    pika.ConnectionParameters(host=host, heartbeat=600, blocked_connection_timeout=300)
-                )
-                self.channel = self.connection.channel()
-                self.channel.queue_declare(queue="orders_queue", durable=True)
-                print(f" Commander connected to RabbitMQ ({host}) — ready to publish to orders_queue")
-                return
-            except Exception as e:
-                print(f" Failed to connect to RabbitMQ: {e}")
-                time.sleep(5)
-        print(" Could not connect to RabbitMQ after multiple attempts.")
-        self.connection = None
-        self.channel = None
-
-    # 👇 Add this method to actually publish messages
-    def publish(self, mission_data: dict):
-        if not self.channel or self.channel.is_closed:
-            print(" RabbitMQ channel not available — reconnecting...")
-            self.connect()
-            if not self.channel:
-                print(" Unable to publish mission — no active RabbitMQ channel.")
-                return
-
-        try:
-            message = json.dumps(mission_data)
-            self.channel.basic_publish(
-                exchange="",
-                routing_key="orders_queue",
-                body=message,
-                properties=pika.BasicProperties(
-                    delivery_mode=2  # make message persistent
-                ),
-            )
-            print(f" Mission published to orders_queue: {message}")
-        except Exception as e:
-            print(f" Failed to publish mission: {e}")
+    def publish_mission(self, mission: dict):
+        soldier_id = str(mission.get("soldier_id"))
+        queue_name = f"orders_queue_{soldier_id}"
+        self.channel.queue_declare(queue=queue_name, durable=True)
+        mission["status"] = "QUEUED"
+        message = json.dumps(mission)
+        self.channel.basic_publish(
+            exchange="",
+            routing_key=queue_name,
+            body=message,
+            properties=pika.BasicProperties(delivery_mode=2),
+        )
+        print(f"📤 Mission published → {queue_name}: {message}")
+        return {"mission": mission, "queue": queue_name}
 
     def close(self):
-        if self.connection and not self.connection.is_closed:
+        if self.connection.is_open:
             self.connection.close()
-            print(" Closed RabbitMQ connection.")

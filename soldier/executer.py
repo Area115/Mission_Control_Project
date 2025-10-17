@@ -1,39 +1,66 @@
 import time
-import random
-import os
-JOB_EXECUTION_TIME = int(os.getenv("JOB_EXECUTION_TIME", 10))
+import json
+from soldier.mq_publisher import StatusPublisher
+
+
 class MissionExecutor:
+    """
+    Simulates mission execution for a soldier.
+    Sends periodic status updates to RabbitMQ via StatusPublisher.
+    """
 
-    def __init__(self, status_callback):
-        self.status_callback = status_callback
+    def __init__(self, soldier_id: str):
+        self.soldier_id = soldier_id
+        self.status_publisher = StatusPublisher()
 
-    def execute(self, mission_data: dict):
-        mission_id = mission_data.get("mission_id")
-        print(f" Starting mission {mission_id} → {mission_data['objective']}")
+    def execute_mission(self, mission: dict):
+        mission_id = mission.get("mission_id")
+        objective = mission.get("objective")
+        priority = mission.get("priority", "MEDIUM")
 
-        # Step 1: mark as IN_PROGRESS
-        self.status_callback(mission_id, "IN_PROGRESS")
+        print(f"🎯 Soldier {self.soldier_id} executing mission {mission_id} → {objective} (Priority: {priority})")
 
-        # Step 2: simulate mission running (5–15 sec delay)
-        pick = random.randint(1, 100)
-        print(f" Mission {mission_id} in progress... will take {JOB_EXECUTION_TIME} seconds.")
-        time.sleep(JOB_EXECUTION_TIME)
+        try:
+            # ------------------------------
+            # 1️⃣ Send IN_PROGRESS update
+            # ------------------------------
+            self._send_status_update(mission_id, "IN_PROGRESS")
 
-        # Step 3: randomly decide success or failure (90% success chance)
-        result = "COMPLETED" if pick < 80 else "FAILED"
+            # ------------------------------
+            # 2️⃣ Simulate mission execution time
+            # ------------------------------
+            total_steps = 5
+            for step in range(1, total_steps + 1):
+                time.sleep(2)  # simulate doing part of the task
+                progress = int((step / total_steps) * 100)
+                print(f"🪖 Soldier {self.soldier_id} progress: {progress}% ({step}/{total_steps})")
 
-        # Step 4: publish final status
-        print(f" Mission {mission_id} {result}")
-        self.status_callback(mission_id, result)
+            # ------------------------------
+            # 3️⃣ Send COMPLETED update
+            # ------------------------------
+            self._send_status_update(mission_id, "COMPLETED")
 
-if __name__ == "__main__":
-    def mock_callback(mission_id, status):
-        print(f" Callback → {mission_id}: {status}")
+            print(f"✅ Soldier {self.soldier_id} completed mission {mission_id} → {objective}")
 
-    mission = {
-        "mission_id": "test123",
-        "objective": "Test mission execution"
-    }
+        except Exception as e:
+            print(f"❌ Error executing mission {mission_id}: {e}")
+            # If something fails, mark as FAILED
+            self._send_status_update(mission_id, "FAILED")
 
-    executor = MissionExecutor(mock_callback)
-    executor.execute(mission)
+    def _send_status_update(self, mission_id: str, status: str):
+        """Helper to send status updates."""
+        try:
+            message = {
+                "mission_id": mission_id,
+                "status": status
+            }
+            self.status_publisher.publish_status(message)
+        except Exception as e:
+            print(f"⚠️ Failed to publish status update for {mission_id}: {e}")
+
+    def close(self):
+        """Cleanly close RabbitMQ connection."""
+        try:
+            self.status_publisher.close()
+        except:
+            pass

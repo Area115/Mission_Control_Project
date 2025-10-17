@@ -1,19 +1,9 @@
 version: "3.9"
 
 services:
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-
-  redis:
-    image: redis:7.2
-    container_name: redis
-    ports:
-      - "6379:6379"
-
+  # ======================
+  # 🧠 Commander (FastAPI)
+  # ======================
   commander:
     build:
       context: .
@@ -22,12 +12,23 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - RABBITMQ_HOST=rabbitmq
       - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RABBIT_HOST=rabbitmq
+      - RABBIT_PORT=5672
+      - PYTHONUNBUFFERED=1
     depends_on:
-      - rabbitmq
-      - redis
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - mission_net
+    restart: always
 
+  # ======================
+  # 🪖 Soldier #1
+  # ======================
   soldier1:
     build:
       context: .
@@ -35,15 +36,20 @@ services:
     container_name: soldier1
     environment:
       - SOLDIER_ID=1
-      - COMMANDER_BASE=http://commander:8000
       - RABBITMQ_HOST=rabbitmq
       - REDIS_HOST=redis
     depends_on:
-      - commander
-      - rabbitmq
-      - redis
-    command: ["/bin/sh", "-c", "sleep 10 && python -m soldier.worker"]
+      rabbitmq:
+        condition: service_healthy
+      commander:
+        condition: service_started
+    networks:
+      - mission_net
+    restart: always
 
+  # ======================
+  # 🪖 Soldier #2
+  # ======================
   soldier2:
     build:
       context: .
@@ -51,11 +57,65 @@ services:
     container_name: soldier2
     environment:
       - SOLDIER_ID=2
-      - COMMANDER_BASE=http://commander:8000
       - RABBITMQ_HOST=rabbitmq
       - REDIS_HOST=redis
     depends_on:
-      - commander
-      - rabbitmq
-      - redis
-    command: ["/bin/sh", "-c", "sleep 10 && python -m soldier.worker"]
+      rabbitmq:
+        condition: service_healthy
+      commander:
+        condition: service_started
+    networks:
+      - mission_net
+    restart: always
+
+  # ======================
+  # 🗄️ Redis (Mission Store)
+  # ======================
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - mission_net
+    restart: always
+
+  # ======================
+  # 🐇 RabbitMQ (Message Broker)
+  # ======================
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    networks:
+      - mission_net
+    restart: always
+
+  # ======================
+  # 🌐 UI (Nginx + HTML Frontend)
+  # ======================
+  ui:
+    image: nginx:alpine
+    container_name: ui
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      commander:
+        condition: service_started
+    networks:
+      - mission_net
+    restart: always
+  
+
+networks:
+  mission_net:
+    driver: bridge

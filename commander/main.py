@@ -1,186 +1,146 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import redis
+import uuid
+import json
 import os
 import time
-import uuid
-import traceback
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
-from collections import defaultdict
-# Commander modules
-from commander.auth import issue_token, verify_token
-from commander.redis_client import MissionStore
+import threading
+
+# ✅ Import publisher & listener
 from commander.mq_publisher import MissionPublisher
-from commander.mq_listner import StatusListener  # ✅ correct spelling and placement
+from commander.mq_listner import StatusListener   
 
-# -------------------------------------------------------------------
-# 🧩 Global setup
-# -------------------------------------------------------------------
+# ===============================
+# 🔧 Redis setup with retry logic
+# ===============================
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+r = None
+for attempt in range(1, 6):
+    try:
+        r = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+        r.ping()
+        print(f"✅ Connected to Redis at {REDIS_HOST}")
+        break
+    except Exception as e:
+        print(f"⚠️ Redis not ready yet ({attempt}/5): {e}")
+        time.sleep(3)
 
-# Track active soldiers and their tokens
-active_soldiers = {}
+if not r:
+    raise Exception("❌ Could not connect to Redis after retries")
 
-# Shared mission storage (Redis)
-mission_store = MissionStore()
+# ===============================
+# 🚀 FastAPI App Setup
+# ===============================
+app = FastAPI(title="🪖 Commander Mission Control API")
 
-# RabbitMQ publisher
-mission_publisher = MissionPublisher()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all for simplicity
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Start background status listener (thread)
-from threading import Thread
+# ===============================
+# 🛰️ Safe Background Listener Startup
+# ===============================
+@app.on_event("startup")
+def on_startup():
+    """Start the background listener safely after API is up."""
+    def start_listener_in_thread():
+        try:
+            listener = StatusListener()
+            thread = threading.Thread(target=listener.start, daemon=True)
+            thread.start()
+            print("🛰️ Commander background listener started ✅")
+        except Exception as e:
+            print(f"❌ Failed to start listener: {e}")
 
-def start_status_listener():
-    listener = StatusListener(mission_store)
-    listener.start_listening()
-
-listener_thread = Thread(target=start_status_listener, daemon=True)
-listener_thread.start()
-
-
-# -------------------------------------------------------------------
-# 🧠 FastAPI App Initialization
-# -------------------------------------------------------------------
-
-app = FastAPI(title="Commander's Camp API", version="1.0")
-
-
-# -------------------------------------------------------------------
-# 🔐 AUTH ENDPOINT — Issues JWT Token
-# -------------------------------------------------------------------
-# @app.get("/auth/token")
-# def get_token(soldier_id: str = Query(..., description="Soldier ID requesting token")):
-#     try:
-#         token = issue_token(soldier_id)
-#         return {"token": token, "ttl_seconds": int(os.getenv("JWT_TTL_SECONDS", 30))}
-#     except Exception as e:
-#         print("AUTH TOKEN ERROR:")
-#         traceback.print_exc()
-#         raise HTTPException(status_code=500, detail=f"Failed to issue token: {e}")
-JWT_TTL_SECONDS = int(os.getenv("JWT_TTL_SECONDS", 30))
-
-@app.get("/auth/token")
-def get_token(soldier_id: str = Query(...)):
-    """Issue a new JWT for a soldier."""
-    token = issue_token(soldier_id)
-    issued_at = time.time()
-    expires_at = issued_at + JWT_TTL_SECONDS
-    active_soldiers[soldier_id] = {
-        "token": token,
-        "issued_at": issued_at,
-        "expires_at": expires_at
-    }
-    return {"token": token, "ttl_seconds": JWT_TTL_SECONDS}
+    # Start in a separate thread after a small delay to ensure RabbitMQ is ready
+    threading.Timer(5.0, start_listener_in_thread).start()
 
 
-@app.get("/auth/current-token")
-def get_current_token(soldier_id: str = Query(...)):
-    """Return the current active JWT for a soldier, if available."""
-    token_info = active_soldiers.get(soldier_id)
-    if not token_info:
-        raise HTTPException(status_code=404, detail=f"No active token found for soldier {soldier_id}")
-
-    # fallback for old tokens that don’t have 'expires_at'
-    issued_at = token_info.get("issued_at", time.time())
-    expires_at = token_info.get("expires_at", issued_at + JWT_TTL_SECONDS)
-
-    remaining = max(0, int(expires_at - time.time()))
-    return {
-        "soldier_id": soldier_id,
-        "current_token": token_info.get("token", "unknown"),
-        "expires_in": remaining
-    }
-
-
-# -------------------------------------------------------------------
-# 🎯 Mission Request Model
-# -------------------------------------------------------------------
-class MissionRequest(BaseModel):
-    soldier_id: str = Field(..., description="Target soldier ID (string or numeric-as-string)")
+# ===============================
+# 📦 Mission Model
+# ===============================
+class Mission(BaseModel):
+    soldier_id: str
     objective: str
-    priority: str = "MEDIUM"
+    priority: str
 
 
-# -------------------------------------------------------------------
-# 🚀 CREATE MISSION ENDPOINT
-# -------------------------------------------------------------------
-@app.post("/missions", status_code=202)
-def create_mission(mission: MissionRequest):
-    mission_id = str(uuid.uuid4())
-    token = issue_token(mission.soldier_id)
-    mission_payload = {
-        "mission_id": mission_id,
-        "soldier_id": mission.soldier_id,
-        "objective": mission.objective,
-        "priority": mission.priority,
-        "status": "QUEUED",
-        "token": token
-    }
-
-    # Check if soldier is already busy
-    active_missions = mission_store.get_all_missions_for_soldier(mission.soldier_id)
-    busy = any(m["status"] == "IN_PROGRESS" for m in active_missions)
+# ===============================
+# 🏠 Root Route
+# ===============================
+@app.get("/")
+def root():
+    return {"message": "Commander API running 🚀"}
 
 
-    # commander/main.py in POST /missions (busy path)
-    if busy:
-        mission_payload["token"] = issue_token(mission.soldier_id)
-        mission_store.enqueue_mission_for_soldier(mission.soldier_id, mission_payload)
-        mission_store.add_mission(mission_id, mission_payload)
-        return {"mission_id": mission_id, "status": "QUEUED (waiting)"}
+# ===============================
+# 🎯 Create Mission
+# ===============================
+@app.post("/missions")
+def create_mission(mission: Mission):
+    """Create a mission, save to Redis, and publish to RabbitMQ."""
+    try:
+        mission_id = str(uuid.uuid4())
+        mission_data = {
+            "mission_id": mission_id,
+            "soldier_id": mission.soldier_id,
+            "objective": mission.objective,
+            "priority": mission.priority,
+            "status": "QUEUED"
+        }
+
+        # ✅ Step 1: Save mission in Redis immediately
+        r.set(f"mission:{mission_id}", json.dumps(mission_data))
+        print(f"💾 Mission saved to Redis: mission:{mission_id}")
+
+        # ✅ Step 2: Publish to RabbitMQ
+        publisher = MissionPublisher()
+        publisher.publish_mission(mission_data)
+        publisher.close()
+
+        return {"message": "Mission assigned", "mission_id": mission_id}
+
+    except Exception as e:
+        print(f"❌ Error creating mission: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
+# ===============================
+# 📋 Get All Missions
+# ===============================
+@app.get("/missions")
+def get_all_missions():
+    """Fetch all missions from Redis (with latest status)."""
+    try:
+        keys = r.keys("mission:*")
+        missions = []
+        for k in keys:
+            data = r.get(k)
+            if not data:
+                continue
+            try:
+                mission = json.loads(data)
+                missions.append(mission)
+            except Exception as e:
+                print(f"⚠️ Could not decode Redis data for {k}: {e}")
+        return missions
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # If soldier is free
-    mission_store.add_mission(mission_id, mission_payload)
-    publisher = MissionPublisher()
-    publisher.publish(mission_payload)
-    print(f"📤 Mission published immediately → {mission_payload}")
-    return {"mission_id": mission_id, "status": "QUEUED"}
 
-
-
-
-# -------------------------------------------------------------------
-# 📡 GET MISSION STATUS ENDPOINT
-# -------------------------------------------------------------------
+# ===============================
+# 🔍 Get Specific Mission by ID
+# ===============================
 @app.get("/missions/{mission_id}")
 def get_mission_status(mission_id: str):
-    mission = mission_store.get_mission(mission_id)
-    if not mission:
+    """Return specific mission by ID"""
+    data = r.get(f"mission:{mission_id}")
+    if not data:
         raise HTTPException(status_code=404, detail="Mission not found")
-    return {"mission_id": mission_id, "status": mission.get("status", "UNKNOWN")}
-
-
-# -------------------------------------------------------------------
-# 🧹 Graceful Shutdown
-# -------------------------------------------------------------------
-@app.on_event("shutdown")
-def shutdown_event():
-    try:
-        mission_publisher.close()
-        print("Closed MissionPublisher connection.")
-    except Exception:
-        pass
-
-
-@app.get("/soldiers/status")
-def get_all_soldier_status():
-    all_missions = mission_store.get_all_missions()
-
-    # Group by soldier_id
-    grouped = defaultdict(list)
-    for mission in all_missions:
-        soldier_id = mission.get("soldier_id", "unknown")
-        grouped[soldier_id].append({
-            "mission_id": mission.get("mission_id"),
-            "objective": mission.get("objective"),
-            "status": mission.get("status", "UNKNOWN"),
-        })
-
-    # Convert to list of dicts
-    response = []
-    for soldier_id, missions in grouped.items():
-        response.append({
-            "soldier_id": soldier_id,
-            "missions": missions
-        })
-
-    return response
+    return json.loads(data)

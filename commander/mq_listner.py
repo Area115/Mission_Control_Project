@@ -1,60 +1,81 @@
+import os
 import pika
 import json
+import redis
+import threading
 import time
-import os
+
+RABBIT_HOST = os.getenv("RABBIT_HOST", "rabbitmq")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 
 class StatusListener:
-    def __init__(self, mission_store):
-        self.mission_store = mission_store
-        self.connection = None
-        self.channel = None
-        self.connect()
+    def __init__(self):
+        self.redis = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 
-    def connect(self):
-        host = os.getenv("RABBITMQ_HOST", "rabbitmq")
-        for attempt in range(10):
+        # Retry connection to RabbitMQ until it’s ready
+        for attempt in range(1, 11):
             try:
-                print(f" [Commander] Connecting to RabbitMQ at {host} (attempt {attempt+1}/10)...")
-                self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=host))
+                print(f"🐇 Connecting to RabbitMQ ({RABBIT_HOST}) attempt {attempt}/10...")
+                self.connection = pika.BlockingConnection(
+                    pika.ConnectionParameters(
+                        host=RABBIT_HOST,
+                        heartbeat=600,
+                        blocked_connection_timeout=300
+                    )
+                )
                 self.channel = self.connection.channel()
                 self.channel.queue_declare(queue="status_queue", durable=True)
-                print(f"✅ [Commander] Connected to RabbitMQ ({host}) — listening on 'status_queue'")
-                return
+                print("📡 Commander listening to status_queue for mission updates")
+                break
             except Exception as e:
-                print(f"Failed to connect to RabbitMQ: {e}")
+                print(f"⚠️ RabbitMQ not ready yet: {e}")
                 time.sleep(5)
-        print(" Could not connect to RabbitMQ after multiple attempts.")
-        self.connection = None
-        self.channel = None
+        else:
+            raise Exception("❌ Could not connect to RabbitMQ after retries")
 
-    # 👇 THIS is the missing callback function
-    def _callback(self, ch, method, properties, body):
-        try:
-            data = json.loads(body)
-            mission_id = data.get("mission_id")
-            status = data.get("status")
-            print(f" Received status update → {data}")
+    def start(self):
+        """Continuously consume mission updates from status_queue."""
+        def callback(ch, method, properties, body):
+            try:
+                print(f"📨 Raw message from status_queue: '{body.decode()}'")
+                msg = body.decode().strip()
+                update = json.loads(msg)
+                mission_id = update.get("mission_id")
+                new_status = update.get("status")
 
-            if mission_id and status:
-                self.mission_store.update_status(mission_id, status)
-                print(f"Mission {mission_id} updated to {status}")
-            else:
-                print(f" Invalid message payload: {data}")
+                if not mission_id:
+                    print("⚠️ Missing mission_id in update")
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                    return
 
-        except Exception as e:
-            print(f" Error processing message: {e}")
-        finally:
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+                key = f"mission:{mission_id}"
+                mission_json = self.redis.get(key)
+                if mission_json:
+                    mission_data = json.loads(mission_json)
+                    mission_data["status"] = new_status
+                    self.redis.set(key, json.dumps(mission_data))
+                    print(f"✅ Updated Redis for {mission_id} → {new_status}")
+                else:
+                    print(f"⚠️ Mission {mission_id} not found in Redis")
 
-    def start_listening(self):
-        if not self.channel:
-            print(" No RabbitMQ channel available for listening.")
-            return
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+            except Exception as e:
+                print(f"❌ Error handling message: {e}")
+                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
-        print(" [Commander] Listening for soldier status updates...")
-        self.channel.basic_consume(
-            queue="status_queue",
-            on_message_callback=self._callback,
-            auto_ack=False
-        )
+        self.channel.basic_qos(prefetch_count=1)
+        self.channel.basic_consume(queue="status_queue", on_message_callback=callback)
+
+        print("🛰️ Commander actively consuming from status_queue...")
         self.channel.start_consuming()
+
+
+def start_status_listener():
+    """Run the listener in a background thread."""
+    def run():
+        listener = StatusListener()
+        listener.start()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    print("🛰️ Commander background listener started ✅")
