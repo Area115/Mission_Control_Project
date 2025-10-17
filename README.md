@@ -1,41 +1,55 @@
-🪖 Commander–Soldier Distributed Mission Control System
+# 🪖 Commander–Soldier Distributed Mission Control System
 
-A fully containerized distributed system built with FastAPI, RabbitMQ, Redis, and Docker Compose.
-The Commander issues missions, and multiple Soldiers execute them in parallel — with live mission tracking, JWT-based soldier authentication, and task queueing.
+A **fully containerized distributed system** built with **FastAPI**, **RabbitMQ**, **Redis**, and **Docker Compose**.  
+The **Commander** issues missions, and multiple **Soldiers** execute them in parallel — with live mission tracking, **JWT-based authentication**, and **task queueing**.
 
-🌍 Project Overview
+---
 
-This project simulates a real-time distributed control system where:
+## 🌍 Project Overview
 
-The Commander (FastAPI app) assigns missions to multiple Soldiers.
+This project simulates a **real-time distributed control system** where:
 
-Each Soldier (Python worker) executes tasks asynchronously and reports progress.
+- 🧭 **Commander (FastAPI app)** assigns missions to multiple Soldiers.  
+- ⚙️ **Each Soldier (Python worker)** executes tasks asynchronously and reports progress.  
+- 📬 **RabbitMQ** handles message-based communication.  
+- 💾 **Redis** stores mission statuses for real-time tracking.  
+- 🐳 **Docker Compose** orchestrates everything for easy deployment.
 
-Communication happens via RabbitMQ message queues.
+> 🪶 **Note:**  
+> This system is configured for **two soldiers only**.  
+> Missions for other soldier IDs will remain **queued**.
 
-Mission status is stored in Redis for real-time tracking.
+### ✅ Example Missions
 
-Everything is orchestrated using Docker Compose, so anyone can run it instantly.
-🚀 Note : This system is made up for two soldiers, so only soldier_id: 1 or 2 will be processed others will be in queue and not being processed.
-Example : 
+```json
 {
   "soldier_id": "2",
   "objective": "Climb Tiger Hill",
   "priority": "MEDIUM"
 }
+```
 
+```json
 {
   "soldier_id": "2",
   "objective": "Check CCTV",
   "priority": "LOW"
 }
+```
 
+```json
 {
   "soldier_id": "1",
-  "objective": "Attend Morning parade",
+  "objective": "Attend Morning Parade",
   "priority": "HIGH"
 }
-These are acceptable.
+```
+
+---
+
+## 🧩 System Architecture
+
+```mermaid
 graph LR
     A[Commander API (FastAPI)] -->|Publishes Mission| B[(RabbitMQ Orders Queue)]
     B --> C1[Soldier #1 Worker]
@@ -44,141 +58,176 @@ graph LR
     C2 -->|Status Updates| D
     D -->|Update Redis| E[(Redis Mission Store)]
     E -->|Queried by| A
-| Component            | Technology              | Purpose                                               |
-| -------------------- | ----------------------- | ----------------------------------------------------- |
-| **Backend API**      | FastAPI (Python)        | Commander interface to send & query missions          |
-| **Messaging Queue**  | RabbitMQ                | Async communication between Commander and Soldiers    |
-| **Data Store**       | Redis                   | Persistent tracking of mission statuses               |
-| **Auth**             | JWT Tokens              | Temporary tokens per soldier for secure communication |
-| **Containerization** | Docker & Docker Compose | Seamless multi-service orchestration                  |
+```
 
-⚙️ System Workflow
+| Component | Technology | Purpose |
+|------------|-------------|----------|
+| **Backend API** | FastAPI (Python) | Commander interface to send & query missions |
+| **Messaging Queue** | RabbitMQ | Async communication between Commander and Soldiers |
+| **Data Store** | Redis | Persistent tracking of mission statuses |
+| **Auth** | JWT Tokens | Secure communication per soldier |
+| **Containerization** | Docker & Docker Compose | Seamless multi-service orchestration |
 
-Commander issues a mission
-→ Sends mission JSON via /missions API.
+---
 
-Mission is published to RabbitMQ (orders_queue).
+## ⚙️ System Workflow
 
-Soldiers consume their respective missions, execute them, and simulate progress.
+1. Commander issues a mission via `/missions` API.  
+2. Mission is **published** to RabbitMQ (`orders_queue`).  
+3. Soldiers **consume** their respective missions and simulate execution.  
+4. Soldiers **send updates** to `status_queue`.  
+5. Commander **updates mission status** in Redis.  
+6. JWT tokens for soldiers are **auto-refreshed every 25 seconds**.
 
-Soldiers send updates back to status_queue.
+---
 
-Commander listens for updates and stores mission status in Redis.
+## 🚀 Getting Started
 
-JWT tokens for each soldier are refreshed every 25 seconds automatically.
+### 1️⃣ Prerequisites
 
+- Install **Docker Desktop**  
+- Verify installation:
 
-🚀 Getting Started (for anyone)
-1️⃣ Prerequisites
-
-Install Docker Desktop
-
-Verify installation:
-
+```bash
 docker --version
 docker compose version
+```
 
-2️⃣ Clone or unzip the project
+---
+
+### 2️⃣ Clone the Repository
+
+```bash
 git clone https://github.com/<your-username>/commander-soldier-control.git
 cd commander-soldier-control
+```
 
-3️⃣ (Optional) Create .env file
+---
 
-In the project root:
+### 3️⃣ (Optional) Create a `.env` File
 
+```bash
 # .env
 JWT_SECRET=supersecret_change_me
 REDIS_HOST=redis
 RABBITMQ_HOST=rabbitmq
 COMMANDER_BASE=http://commander:8000
 JOB_EXECUTION_TIME=10
+```
 
-4️⃣ Start the system
+---
+
+### 4️⃣ Start the System
+
+```bash
 docker compose up --build
-
+```
 
 This will:
 
-Build all Docker images
+- Build all Docker images  
+- Start Commander, Soldiers, Redis, and RabbitMQ  
+- Connect all services automatically  
 
-Start Commander, Soldiers, Redis, and RabbitMQ
+You should see logs like:
 
-Automatically connect all services
-
-Wait until logs show messages like:
-
+```
 ✅ Commander connected to RabbitMQ (rabbitmq)
 🪖 Soldier started with ID=1
 🔐 Received JWT for soldier 1
+```
 
-5️⃣ Test the API
+---
 
-Open the interactive Swagger UI:
+### 5️⃣ Test the API
 
-👉 http://localhost:8000/docs
+Open Swagger UI:
 
-Use the POST /missions endpoint:
+👉 [http://localhost:8000/docs](http://localhost:8000/docs)
 
+**POST /missions**
+
+```json
 {
   "soldier_id": "1",
   "objective": "Secure Tiger Hill",
   "priority": "HIGH"
 }
+```
 
+**Response:**
 
-You’ll get a response:
-
+```json
 {
   "mission_id": "abcd-1234...",
   "status": "QUEUED"
 }
+```
 
+**GET /missions/{mission_id}**
 
-Then check mission progress:
+Status will change as:
 
-GET /missions/{mission_id}
-
-
-It will change as:
-
+```
 QUEUED → IN_PROGRESS → COMPLETED
+```
 
-6️⃣ View RabbitMQ Dashboard
+---
 
-👉 http://localhost:15672
+### 6️⃣ View RabbitMQ Dashboard
 
+👉 [http://localhost:15672](http://localhost:15672)
+
+```
 Username: guest
 Password: guest
+```
 
 You’ll see:
 
-orders_queue → new missions
+- `orders_queue` → new missions  
+- `status_queue` → soldier status updates
 
-status_queue → soldier status updates
+---
 
-7️⃣ View Redis Data (optional)
+### 7️⃣ View Redis Data (Optional)
 
-You can enter the Redis container:
-
+```bash
 docker exec -it redis redis-cli
 keys *
 get mission:<mission_id>
+```
 
-8️⃣ Stop the system
+---
+
+### 8️⃣ Stop the System
+
+```bash
 docker compose down
+```
 
 Clean everything (remove volumes):
 
+```bash
 docker compose down --volumes
+```
 
-| Method | Endpoint                 | Description                                                         |
-| ------ | ------------------------ | ------------------------------------------------------------------- |
-| `POST` | `/missions`              | Assign new mission to soldier                                       |
-| `GET`  | `/missions/{mission_id}` | Get mission status                                                  |
-| `GET`  | `/auth/token`            | Fetch JWT token for a soldier                                       |
-| `GET`  | `/soldiers/status`       | *(Optional)* Get list of active soldiers and their current missions |
+---
 
-🧱 Project Structure
+## 🔗 API Endpoints
+
+| Method | Endpoint | Description |
+|--------|-----------|-------------|
+| `POST` | `/missions` | Assign new mission to soldier |
+| `GET`  | `/missions/{mission_id}` | Get mission status |
+| `GET`  | `/auth/token` | Fetch JWT token for a soldier |
+| `GET`  | `/soldiers/status` | *(Optional)* Get list of active soldiers and their current missions |
+
+---
+
+## 🧱 Project Structure
+
+```
 MCP/
 ├── commander/
 │   ├── main.py                # FastAPI app (Commander)
@@ -199,14 +248,28 @@ MCP/
 ├── Dockerfile.soldier         # Build Soldier image
 ├── .env                       # Environment configuration
 └── README.md                  # You’re here 🚀
+```
 
-🧰 Useful Docker Commands
-| Action                    | Command                              |
-| ------------------------- | ------------------------------------ |
-| Start everything          | `docker compose up --build`          |
-| Stop containers           | `docker compose down`                |
-| Check logs                | `docker logs commander --tail 50 -f` |
-| Rebuild after code change | `docker compose up -d --build`       |
-| List containers           | `docker ps`                          |
-| Enter container           | `docker exec -it commander bash`     |
+---
 
+## 🧰 Useful Docker Commands
+
+| Action | Command |
+|--------|----------|
+| Start everything | `docker compose up --build` |
+| Stop containers | `docker compose down` |
+| Check logs | `docker logs commander --tail 50 -f` |
+| Rebuild after code change | `docker compose up -d --build` |
+| List containers | `docker ps` |
+| Enter container | `docker exec -it commander bash` |
+
+---
+
+## 🧑‍💻 Author
+
+**Omkar Suralkar**  
+💼 Junior Data Scientist | 🚀 AI Systems Enthusiast | 🧠 Building Distributed & Intelligent Systems
+
+---
+
+⭐ *If you like this project, consider giving it a star on GitHub!* ⭐
