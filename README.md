@@ -59,7 +59,7 @@ This project simulates a **real-time distributed control system** where:
 
 ---
 
-
+![image alt](https://github.com/Area115/Mission_Control_Project/blob/6e59ca0f1d988d73e2114d7149b90ef2d56251e3/MCP.png)
 
 
 ## ⚙️ System Workflow
