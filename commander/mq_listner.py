@@ -4,6 +4,7 @@ import json
 import redis
 import threading
 import time
+from commander.auth import verify_token  # 🟢 NEW — import token verifier
 
 RABBIT_HOST = os.getenv("RABBIT_HOST", "rabbitmq")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
@@ -37,9 +38,26 @@ class StatusListener:
         """Continuously consume mission updates from status_queue."""
         def callback(ch, method, properties, body):
             try:
-                print(f"📨 Raw message from status_queue: '{body.decode()}'")
-                msg = body.decode().strip()
-                update = json.loads(msg)
+                raw_message = body.decode().strip()
+                print(f"📨 Raw message from status_queue: '{raw_message}'")
+
+                # Parse JSON
+                update = json.loads(raw_message)
+
+                # 🟢 Step 1: Extract and verify token
+                token = update.get("token")
+                if not token:
+                    print("⚠️ Missing token in update — ignoring message.")
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                    return
+
+                decoded = verify_token(token)
+                if not decoded:
+                    print("🚫 Invalid or expired token — ignoring message.")
+                    ch.basic_ack(delivery_tag=method.delivery_tag)
+                    return
+
+                # 🟢 Step 2: Verify mission data
                 mission_id = update.get("mission_id")
                 new_status = update.get("status")
 
@@ -58,6 +76,10 @@ class StatusListener:
                 else:
                     print(f"⚠️ Mission {mission_id} not found in Redis")
 
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+
+            except json.JSONDecodeError:
+                print("❌ Received non-JSON message in status_queue.")
                 ch.basic_ack(delivery_tag=method.delivery_tag)
             except Exception as e:
                 print(f"❌ Error handling message: {e}")

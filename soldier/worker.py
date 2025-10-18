@@ -3,6 +3,7 @@ import json
 import os
 import time
 from soldier.executer import MissionExecutor
+from soldier.auth_client import AuthClient   # 🟢 NEW — import AuthClient
 
 
 # ===============================
@@ -47,7 +48,12 @@ class MissionConsumer:
         else:
             raise Exception(f"❌ Soldier {SOLDIER_ID} could not connect to RabbitMQ")
 
-        self.executor = MissionExecutor(SOLDIER_ID)
+        # 🟢 Initialize token refresher (AuthClient)
+        self.auth_client = AuthClient(SOLDIER_ID)
+        print(f"🔑 Soldier {SOLDIER_ID}: Auth client initialized — fetching rotating token")
+
+        # 🟢 Pass to executor (it may need token for publishing)
+        self.executor = MissionExecutor(SOLDIER_ID, self.auth_client)
 
     # -------------------------------------------------------
     # Consume and process messages
@@ -69,7 +75,11 @@ class MissionConsumer:
                     return
 
                 print(f"📥 Soldier {SOLDIER_ID} received mission → {mission}")
-                self.executor.execute_mission(mission)
+
+                # 🟢 Fetch fresh token before executing
+                token = self.auth_client.get_token()
+                self.executor.execute_mission(mission, token)   # Pass token to executor
+
                 ch.basic_ack(delivery_tag=method.delivery_tag)
 
             except Exception as e:

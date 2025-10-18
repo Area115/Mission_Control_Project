@@ -7,6 +7,8 @@ import json
 import os
 import time
 import threading
+from commander.auth import issue_token, verify_token
+
 
 # ✅ Import publisher & listener
 from commander.mq_publisher import MissionPublisher
@@ -144,3 +146,40 @@ def get_mission_status(mission_id: str):
     if not data:
         raise HTTPException(status_code=404, detail="Mission not found")
     return json.loads(data)
+
+@app.get("/auth/token/{soldier_id}")
+def get_token_for_soldier(soldier_id: str):
+    """Return current active token for a given soldier."""
+    try:
+        from commander.auth import active_tokens
+        token_data = active_tokens.get(soldier_id)
+        if not token_data:
+            return {"error": f"No active token found for Soldier {soldier_id}"}
+        return token_data
+    except Exception as e:
+        return {"error": f"Failed to fetch token: {e}"}
+
+
+# ===============================
+# 🔐 Soldier Token Endpoint
+# ===============================
+@app.get("/auth/token")
+def get_token(soldier_id: str):
+    """Generate a short-lived token for the given soldier."""
+    try:
+        token = issue_token(soldier_id)
+        return {"soldier_id": soldier_id, "token": token, "expires_in": 30}
+    except Exception as e:
+        print(f"❌ Error issuing token: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/auth/active-tokens")
+def get_active_tokens():
+    """Return latest issued tokens for debugging (optional UI feature)."""
+    try:
+        from commander.auth import active_tokens
+        return active_tokens
+    except Exception:
+        return {"message": "No active token data available"}
+
+

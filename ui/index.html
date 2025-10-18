@@ -58,11 +58,27 @@
     tr:hover {
       background-color: #f1f2f6;
     }
+    .section {
+      margin-top: 40px;
+    }
+    #tokenResult, #missionStatusResult {
+      margin-top: 15px;
+      font-family: monospace;
+      word-break: break-all;
+      background: #fff;
+      border-radius: 8px;
+      padding: 10px;
+      width: 80%;
+      margin-left: auto;
+      margin-right: auto;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
   </style>
 </head>
 <body>
   <h1>🪖 Commander Mission Control</h1>
 
+  <!-- 🛰️ Mission Assignment Form -->
   <form id="missionForm">
     <label>Soldier ID:</label>
     <select id="soldier_id">
@@ -80,38 +96,71 @@
     <button type="submit">🚀 Assign Mission</button>
   </form>
 
-  <h2>📋 Current Missions</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Mission ID</th>
-        <th>Soldier</th>
-        <th>Objective</th>
-        <th>Priority</th>
-        <th>Status</th>
-      </tr>
-    </thead>
-    <tbody id="missionTable"></tbody>
-  </table>
+  <!-- 📋 Current Missions -->
+  <div class="section">
+    <h2>📋 Current Missions</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Mission ID</th>
+          <th>Soldier</th>
+          <th>Objective</th>
+          <th>Priority</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="missionTable"></tbody>
+    </table>
+  </div>
+
+  <!-- 🔐 Token Checker -->
+  <div class="section">
+    <h2>🔐 Check Soldier Token</h2>
+    <form id="tokenForm">
+      <label>Soldier ID:</label>
+      <select id="token_soldier_id">
+        <option value="1">1</option>
+        <option value="2">2</option>
+      </select>
+      <button type="submit">🔎 Get Current Token</button>
+    </form>
+
+    <div id="tokenResult">Enter Soldier ID and click “Get Current Token”.</div>
+  </div>
+
+  <!-- 🎯 Mission Status Checker -->
+  <div class="section">
+    <h2>🎯 Check Mission Status</h2>
+    <form id="missionStatusForm">
+      <label>Mission ID:</label>
+      <input type="text" id="mission_status_id" placeholder="Enter mission ID" required />
+      <button type="submit">🔎 Get Status</button>
+    </form>
+
+    <div id="missionStatusResult">Enter Mission ID and click “Get Status”.</div>
+  </div>
 
   <script>
-    // Detect where the UI is running (browser vs Docker)
+    // Detect where UI is running (host vs Docker)
     let baseURL = "";
-
     if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-    // When opened from host machine
-    baseURL = "http://localhost:8000";
+      baseURL = "http://localhost:8000";
     } else {
-    // When running inside Docker (nginx container)
-    baseURL = "http://commander:8000";
+      baseURL = "http://commander:8000";
     }
 
     console.log("Using API base URL:", baseURL);
 
-
     const missionForm = document.getElementById("missionForm");
     const missionTable = document.getElementById("missionTable");
+    const tokenForm = document.getElementById("tokenForm");
+    const tokenResult = document.getElementById("tokenResult");
+    const missionStatusForm = document.getElementById("missionStatusForm");
+    const missionStatusResult = document.getElementById("missionStatusResult");
 
+    // =============================
+    // 📦 Fetch All Missions
+    // =============================
     async function fetchMissions() {
       try {
         const res = await fetch(`${baseURL}/missions`);
@@ -139,6 +188,9 @@
       });
     }
 
+    // =============================
+    // 🚀 Assign New Mission
+    // =============================
     missionForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const mission = {
@@ -166,7 +218,68 @@
       }
     });
 
-    // Auto refresh every 5 seconds
+    // =============================
+    // 🔐 Soldier Token Checker
+    // =============================
+    tokenForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const soldierId = document.getElementById("token_soldier_id").value;
+      tokenResult.innerHTML = "⏳ Fetching token...";
+
+      try {
+        const res = await fetch(`${baseURL}/auth/token/${soldierId}`);
+        const data = await res.json();
+
+        if (data.error) {
+          tokenResult.innerHTML = `<span style="color:red;">❌ ${data.error}</span>`;
+          return;
+        }
+
+        tokenResult.innerHTML = `
+          <strong>Soldier ${soldierId}</strong><br>
+          <span style="color:green;">✅ Current Token:</span><br>
+          ${data.token}<br>
+          <small>⏰ Expires At: ${new Date(data.expires_at).toLocaleTimeString()}</small>
+        `;
+      } catch (err) {
+        console.error(err);
+        tokenResult.innerHTML = `<span style="color:red;">⚠️ Failed to fetch token</span>`;
+      }
+    });
+
+    // =============================
+    // 🎯 Mission Status Checker
+    // =============================
+    missionStatusForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const missionId = document.getElementById("mission_status_id").value.trim();
+      missionStatusResult.innerHTML = "⏳ Checking status...";
+
+      try {
+        const res = await fetch(`${baseURL}/missions/${missionId}`);
+        const data = await res.json();
+
+        if (!res.ok || data.detail === "Mission not found") {
+          missionStatusResult.innerHTML = `<span style="color:red;">❌ Mission not found</span>`;
+          return;
+        }
+
+        missionStatusResult.innerHTML = `
+          <strong>Mission ID:</strong> ${data.mission_id}<br>
+          <strong>Soldier:</strong> ${data.soldier_id}<br>
+          <strong>Status:</strong> <span style="color:green;">${data.status}</span><br>
+          <strong>Objective:</strong> ${data.objective}<br>
+          <strong>Priority:</strong> ${data.priority}
+        `;
+      } catch (err) {
+        console.error(err);
+        missionStatusResult.innerHTML = `<span style="color:red;">⚠️ Failed to fetch mission status</span>`;
+      }
+    });
+
+    // =============================
+    // 🔄 Auto Refresh Missions
+    // =============================
     setInterval(fetchMissions, 5000);
     fetchMissions();
   </script>

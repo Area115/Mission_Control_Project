@@ -1,50 +1,40 @@
-import os
-import time
 import threading
+import time
 import requests
+import os
 
-COMMANDER_BASE = os.getenv("COMMANDER_BASE", "http://commander:8000")
-SOLDIER_ID = os.getenv("SOLDIER_ID", "01")
-REFRESH_SECONDS = int(os.getenv("JWT_REFRESH_SECONDS", 25))
+COMMANDER_URL = os.getenv("COMMANDER_URL", "http://commander:8000")
 
 class AuthClient:
+    """Handles short-lived JWT token rotation for soldiers."""
+
     def __init__(self, soldier_id: str):
         self.soldier_id = soldier_id
         self.token = None
-        self._stop = False
-        self._thread = None
+        self.lock = threading.Lock()
+        self.refresh_interval = 25  # refresh every 25s
+        self.refresh_thread = threading.Thread(target=self._auto_refresh, daemon=True)
+        self.refresh_thread.start()
 
-    def fetch_token_once(self):
-        url = f"{COMMANDER_BASE}/auth/token"
-        params = {"soldier_id": self.soldier_id}
+    def _fetch_token(self):
+        try:
+            res = requests.get(f"{COMMANDER_URL}/auth/token", params={"soldier_id": self.soldier_id}, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                with self.lock:
+                    self.token = data.get("token")
+                print(f"🔑 Soldier {self.soldier_id}: Token refreshed")
+            else:
+                print(f"⚠️ Soldier {self.soldier_id}: Failed to fetch token ({res.status_code})")
+        except Exception as e:
+            print(f"❌ Soldier {self.soldier_id}: Error fetching token: {e}")
 
-        for attempt in range(10):
-            try:
-                resp = requests.get(url, params=params, timeout=5)
-                resp.raise_for_status()
-                data = resp.json()
-                self.token = data["token"]
-                print(f"Received JWT for soldier {self.soldier_id}")
-                return
-            except Exception as e:
-                print(f"Token fetch error (attempt {attempt+1}/10): {e}")
-                time.sleep(5)
-        print(f" Soldier {self.soldier_id} could not fetch token after multiple attempts.")
+    def _auto_refresh(self):
+        while True:
+            self._fetch_token()
+            time.sleep(self.refresh_interval)
 
-    def start_auto_refresh(self):
-        def loop():
-            while not self._stop:
-                try:
-                    print(f"♻️ Refreshing token for soldier {self.soldier_id}...")
-                    self.fetch_token_once()
-                except Exception as e:
-                    print(f"❌ Token fetch error: {e}")
-                for _ in range(REFRESH_SECONDS):
-                    if self._stop:
-                        break
-                    time.sleep(1)
-
-    def stop(self):
-        self._stop = True
-        if self._thread:
-            self._thread.join(timeout=1)
+    def get_token(self):
+        """Safely get current token."""
+        with self.lock:
+            return self.token
