@@ -78,7 +78,7 @@ class MissionExecutor:
             if token:
                 message["token"] = token
                 print(f"🔐 Soldier {self.soldier_id} attached token to update ({status})")
-            else:
+            else: 
                 print(f"⚠️ Soldier {self.soldier_id} has no token available while sending {status}")
 
             self.status_publisher.publish_status(message)
